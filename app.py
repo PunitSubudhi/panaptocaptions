@@ -5,6 +5,7 @@ import os
 import re
 from openai import OpenAI
 from fpdf import FPDF
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 @st.cache_data
 def extract_transcript_from_html(html_content):
@@ -41,79 +42,92 @@ def polish_transcript_with_gpt(transcript):
         chunks.append(transcript[:last_split])
         transcript = transcript[last_split:].lstrip()
 
-    # Process each chunk
-    formatted_chunks = []
-    progress = st.progress(0)
-    placeholder = st.empty()
-
-    for i, chunk in enumerate(chunks):
+    def format_chunk(i, chunk):
         prompt = (
             "You are a helpful assistant. Format the following transcript into clean, well-structured paragraphs. "
             "Add appropriate headings and subheadings based on topics discussed. Remove filler words like 'um', 'ahh', etc., "
             "but retain all educational content and examples. Do not summarize—preserve every teaching point.\n\n"
             f"Transcript chunk {i + 1}:\n{chunk}"
         )
-
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4,
         )
-        formatted_text = response.choices[0].message.content
-        formatted_chunks.append(formatted_text)
+        return i, response.choices[0].message.content
 
-        # Define a proper generator for write_stream
+    futures = []
+    with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
+        for i, chunk in enumerate(chunks):
+            futures.append(executor.submit(format_chunk, i, chunk))
+
+        progress = st.progress(0)
+        placeholder = st.empty()
+        results = [None] * len(chunks)
+
+        for completed in as_completed(futures):
+            i, formatted_text = completed.result()
+            results[i] = formatted_text
+            progress.progress(sum(r is not None for r in results) / len(chunks))
+
+    for i, formatted_text in enumerate(results):
         def stream_chunk(title, content):
             yield f"\n\n### {title}\n\n{content}"
-
         placeholder.write_stream(stream_chunk(f"Chunk {i + 1}", formatted_text))
-        progress.progress((i + 1) / len(chunks))
 
-    return "\n\n---\n\n".join(formatted_chunks)
+    return "\n\n---\n\n".join(results)
 
 # Streamlit app
 st.title("Panopto Transcript Extractor + Formatter")
 
-uploaded_file = st.file_uploader("Upload your Panopto HTML file", type="html")
+st.sidebar.title("Settings")
+uploaded_files = st.sidebar.file_uploader("Upload one or more Panopto HTML files", type="html", accept_multiple_files=True)
 
-if uploaded_file is not None:
-    html_content = uploaded_file.read()
-    raw_transcript = extract_transcript_from_html(html_content)
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        with st.expander(f"📂 {uploaded_file.name}", expanded=True):
+            html_content = uploaded_file.read()
+            soup = BeautifulSoup(html_content, "html.parser")
+            title_tag = soup.find("h1", id="deliveryTitle")
+            base_filename = "transcript"
+            if title_tag and title_tag.text.strip():
+                base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
 
-    if "polished_transcript" not in st.session_state:
-        if st.button("Format Transcript with GPT-3.5 Turbo"):
-            with st.spinner("Polishing transcript with GPT-3.5 Turbo..."):
-                st.session_state.polished_transcript = polish_transcript_with_gpt(raw_transcript)
+            raw_transcript = extract_transcript_from_html(html_content)
 
-    if "polished_transcript" in st.session_state:
-        polished_transcript = st.session_state.polished_transcript
-        formatted_txt_path = tempfile.NamedTemporaryFile(delete=False, suffix="_formatted.txt", mode="w", encoding="utf-8")
-        formatted_txt_path.write(polished_transcript)
-        formatted_txt_path.close()
+            format_button_label = f"Format '{uploaded_file.name}' with GPT-3.5 Turbo"
+            if f"polished_{uploaded_file.name}" not in st.session_state:
+                if st.button(format_button_label):
+                    with st.spinner(f"Formatting {uploaded_file.name}..."):
+                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
 
-        # Tabs for raw and formatted
-        raw_tab, formatted_tab = st.tabs(["📄 Raw Transcript", "✨ Formatted Transcript"])
-        with raw_tab:
-            st.text_area("Transcript Preview", raw_transcript, height=400)
-        with formatted_tab:
-            st.text_area("Formatted Output", polished_transcript, height=400)
+            if f"polished_{uploaded_file.name}" in st.session_state:
+                polished_transcript = st.session_state[f"polished_{uploaded_file.name}"]
+                with tempfile.NamedTemporaryFile(delete=False, suffix="_formatted.txt", mode="w", encoding="utf-8") as tmp:
+                    tmp.write(polished_transcript)
+                    formatted_txt_path = tmp.name
 
-        # Always-visible download buttons
-        st.markdown("### 📥 Download Options")
-        st.download_button(
-            label="Download Raw Transcript (.txt)",
-            data=raw_transcript,
-            file_name="raw_transcript.txt",
-            mime="text/plain"
-        )
-        st.download_button(
-            label="Download Formatted Transcript (.txt)",
-            data=polished_transcript,
-            file_name="formatted_transcript.txt",
-            mime="text/plain"
-        )
+                raw_tab, formatted_tab = st.tabs(["📄 Raw Transcript", "✨ Formatted Transcript"])
+                with raw_tab:
+                    st.text_area("Transcript Preview", raw_transcript, height=400)
+                with formatted_tab:
+                    st.text_area("Formatted Output", polished_transcript, height=400)
 
-        os.remove(formatted_txt_path)
-    else:
-        st.subheader("Preview of Extracted Raw Transcript")
-        st.text_area("Transcript Preview", raw_transcript, height=300)
+                st.markdown("### 📥 Download Options")
+                st.download_button(
+                    label="Download Raw Transcript (.txt)",
+                    data=raw_transcript,
+                    file_name=f"{base_filename}-raw.txt",
+                    mime="text/plain"
+                )
+                st.download_button(
+                    label="Download Formatted Transcript (.txt)",
+                    data=polished_transcript,
+                    file_name=f"{base_filename}-formatted.txt",
+                    mime="text/plain"
+                )
+
+                os.remove(formatted_txt_path)
+            else:
+                st.subheader("Preview of Extracted Raw Transcript")
+                st.text_area("Transcript Preview", raw_transcript, height=300)
