@@ -70,10 +70,10 @@ def polish_transcript_with_gpt(transcript):
             results[i] = formatted_text
             progress.progress(sum(r is not None for r in results) / len(chunks))
 
-    for i, formatted_text in enumerate(results):
-        def stream_chunk(title, content):
-            yield f"\n\n### {title}\n\n{content}"
-        placeholder.write_stream(stream_chunk(f"Chunk {i + 1}", formatted_text))
+    # for i, formatted_text in enumerate(results):
+    #     def stream_chunk(title, content):
+    #         yield f"\n\n### {title}\n\n{content}"
+    #     placeholder.write_stream(stream_chunk(f"Chunk {i + 1}", formatted_text))
 
     return "\n\n---\n\n".join(results)
 
