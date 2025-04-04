@@ -79,6 +79,16 @@ def polish_transcript_with_gpt(transcript):
 
 # Streamlit app
 st.title("Panopto Transcript Extractor + Formatter")
+st.expander("Instructions", expanded=True).markdown(
+    """
+    1. Open any Panapto Recording and then click on the "Captions" tab.
+    2. On the page use "Ctrl/Cmd + S" to save the page as an HTML file.
+    3. Upload the HTML file(s) here.
+    4. Click the button to format the transcript with GPT-3.5 Turbo.
+    5. Download the raw and formatted transcripts.
+    """
+)
+
 
 st.sidebar.title("Settings")
 uploaded_files = st.sidebar.file_uploader("Upload one or more Panopto HTML files", type="html", accept_multiple_files=True)
