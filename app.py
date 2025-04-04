@@ -82,7 +82,7 @@ st.title("Panopto Transcript Extractor + Formatter")
 st.expander("Instructions", expanded=True).markdown(
     """
     1. Open any Panapto Recording and then click on the "Captions" tab.
-    2. On the page use "Ctrl/Cmd + S" to save the page as an HTML file.
+    2. On the page use "Ctrl/Cmd + Shift + S" to save the page as an HTML file (Please choose "Web Page, Complete" if prompted).
     3. Upload the HTML file(s) here.
     4. Click the button to format the transcript with GPT-3.5 Turbo.
     5. Download the raw and formatted transcripts.
