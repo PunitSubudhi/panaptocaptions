@@ -1,4 +1,4 @@
 beautifulsoup4==4.13.3
 openai==1.70.0
-protobuf==4.25.3
-streamlit==1.37.1
+streamlit==1.44.1
+google-genai==1.9.0
