@@ -2,10 +2,43 @@ import streamlit as st
 from bs4 import BeautifulSoup
 import tempfile
 import os
-import re
+from google import genai
 from openai import OpenAI
-from fpdf import FPDF
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def split_transcript(transcript, max_chars=8000):
+    chunks = []
+    while transcript:
+        chunk = transcript[:max_chars]
+        last_split = chunk.rfind('\n\n')
+        if last_split == -1:
+            last_split = max_chars
+        chunks.append(transcript[:last_split])
+        transcript = transcript[last_split:].lstrip()
+    return chunks
+
+
+def generate_prompt(i, chunk):
+    return (
+        "You are a helpful assistant. Format the following transcript into clean, well-structured paragraphs. "
+        "Add appropriate headings and subheadings based on topics discussed. Remove filler words like 'um', 'ahh', etc., "
+        "but retain all educational content and examples. Do not summarize—preserve every teaching point.\n\n"
+        f"Transcript chunk {i + 1}:\n{chunk}"
+    )
+
+
+def process_chunks(chunks, format_chunk_func):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    futures = []
+    with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
+        for i, chunk in enumerate(chunks):
+            futures.append(executor.submit(format_chunk_func, i, chunk))
+        progress = st.progress(0)
+        results = [None] * len(chunks)
+        for completed in as_completed(futures):
+            i, formatted_text = completed.result()
+            results[i] = formatted_text
+            progress.progress(sum(r is not None for r in results) / len(chunks))
+    return "\n\n---\n\n".join(results)
 
 @st.cache_data
 def extract_transcript_from_html(html_content):
@@ -29,26 +62,10 @@ def extract_transcript_from_html(html_content):
 def polish_transcript_with_gpt(transcript):
     client = OpenAI(api_key=st.secrets["openai_api_key"])
 
-    # Define a rough character limit for each chunk (approx. 4 characters per token)
-    max_chars_per_chunk = 8000
-
-    # Split the transcript into chunks
-    chunks = []
-    while transcript:
-        chunk = transcript[:max_chars_per_chunk]
-        last_split = chunk.rfind('\n\n')
-        if last_split == -1:
-            last_split = max_chars_per_chunk
-        chunks.append(transcript[:last_split])
-        transcript = transcript[last_split:].lstrip()
+    chunks = split_transcript(transcript, 8000)
 
     def format_chunk(i, chunk):
-        prompt = (
-            "You are a helpful assistant. Format the following transcript into clean, well-structured paragraphs. "
-            "Add appropriate headings and subheadings based on topics discussed. Remove filler words like 'um', 'ahh', etc., "
-            "but retain all educational content and examples. Do not summarize—preserve every teaching point.\n\n"
-            f"Transcript chunk {i + 1}:\n{chunk}"
-        )
+        prompt = generate_prompt(i, chunk)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
@@ -56,26 +73,23 @@ def polish_transcript_with_gpt(transcript):
         )
         return i, response.choices[0].message.content
 
-    futures = []
-    with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
-        for i, chunk in enumerate(chunks):
-            futures.append(executor.submit(format_chunk, i, chunk))
+    return process_chunks(chunks, format_chunk)
 
-        progress = st.progress(0)
-        placeholder = st.empty()
-        results = [None] * len(chunks)
+def polish_transcript_with_gemini(transcript):
+    client = genai.Client(api_key=st.secrets["gemini_api_key"])
 
-        for completed in as_completed(futures):
-            i, formatted_text = completed.result()
-            results[i] = formatted_text
-            progress.progress(sum(r is not None for r in results) / len(chunks))
+    chunks = split_transcript(transcript, 8000)
 
-    # for i, formatted_text in enumerate(results):
-    #     def stream_chunk(title, content):
-    #         yield f"\n\n### {title}\n\n{content}"
-    #     placeholder.write_stream(stream_chunk(f"Chunk {i + 1}", formatted_text))
+    def format_chunk(i, chunk):
+        prompt = generate_prompt(i, chunk)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+        return i, response.text
 
-    return "\n\n---\n\n".join(results)
+    return process_chunks(chunks, format_chunk)
+
 
 # Streamlit app
 st.title("Panopto Transcript Extractor + Formatter")
@@ -91,6 +105,11 @@ st.expander("Instructions", expanded=True).markdown(
 
 
 st.sidebar.title("Settings")
+model = st.sidebar.selectbox(
+    "Select Model",
+    ("GPT-3.5 Turbo", "Gemini 2.0 Flash"),
+    index=0,
+)
 uploaded_files = st.sidebar.file_uploader("Upload one or more Panopto HTML files", type="html", accept_multiple_files=True)
 
 if uploaded_files:
@@ -105,11 +124,14 @@ if uploaded_files:
 
             raw_transcript = extract_transcript_from_html(html_content)
 
-            format_button_label = f"Format '{uploaded_file.name}' with GPT-3.5 Turbo"
+            format_button_label = "Format with GPT-3.5 Turbo" if model == "GPT-3.5 Turbo" else "Format with Gemini 2.0 Flash"
             if f"polished_{uploaded_file.name}" not in st.session_state:
                 if st.button(format_button_label):
                     with st.spinner(f"Formatting {uploaded_file.name}..."):
-                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
+                        if model == "GPT-3.5 Turbo":
+                            st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
+                        else:
+                            st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gemini(raw_transcript)
 
             if f"polished_{uploaded_file.name}" in st.session_state:
                 polished_transcript = st.session_state[f"polished_{uploaded_file.name}"]
