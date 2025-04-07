@@ -1,4 +1,4 @@
 beautifulsoup4==4.13.3
-fpdf==1.7.2
 openai==1.70.0
+protobuf==4.25.3
 streamlit==1.37.1
