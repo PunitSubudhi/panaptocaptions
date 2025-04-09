@@ -9,6 +9,13 @@ import zipfile
 import uuid
 
 
+st.set_page_config(
+    page_title="Panopto Transcript Extractor + Formatter",
+    page_icon="📜",
+    layout="wide",
+    initial_sidebar_state="expanded"
+    )
+
 def split_transcript(transcript, max_chars=8000):
     chunks = []
     while transcript:
