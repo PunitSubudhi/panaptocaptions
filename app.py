@@ -6,6 +6,7 @@ from google import genai
 from openai import OpenAI
 import io
 import zipfile
+import uuid
 
 
 def split_transcript(transcript, max_chars=8000):
@@ -116,28 +117,28 @@ model = st.sidebar.selectbox(
 uploaded_files = st.sidebar.file_uploader("Upload one or more Panopto HTML files", type="html", accept_multiple_files=True)
 
 if uploaded_files:
-    # if st.sidebar.button("Download all formatted transcripts"):
-    #     zip_buffer = io.BytesIO()
-    #     with zipfile.ZipFile(zip_buffer, "w") as zf:
-    #         for uploaded_file in uploaded_files:
-    #             if f"polished_{uploaded_file.name}" in st.session_state:
-    #                 polished = st.session_state[f"polished_{uploaded_file.name}"]
-    #                 uploaded_file.seek(0)
-    #                 content = uploaded_file.read()
-    #                 soup = BeautifulSoup(content, "html.parser")
-    #                 title_tag = soup.find("h1", id="deliveryTitle")
-    #                 base_filename = "transcript"
-    #                 if title_tag and title_tag.text.strip():
-    #                     base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
+    with st.sidebar.popover("Download all formatted transcripts"):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            for uploaded_file in uploaded_files:
+                if f"polished_{uploaded_file.name}" in st.session_state:
+                    polished = st.session_state[f"polished_{uploaded_file.name}"]
+                    uploaded_file.seek(0)
+                    content = uploaded_file.read()
+                    soup = BeautifulSoup(content, "html.parser")
+                    title_tag = soup.find("h1", id="deliveryTitle")
+                    base_filename = "transcript"
+                    if title_tag and title_tag.text.strip():
+                        base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
 
-    #                 zf.writestr(f"{base_filename}-formatted.txt", polished)
-    #     st.download_button(
-    #         label="Download All Formatted Transcripts (ZIP)",
-    #         data=zip_buffer.getvalue(),
-    #         file_name="all_formatted.zip",
-    #         mime="application/zip"
-    #     )
-    if st.sidebar.button("Format all uploaded files with the selected model"):
+                    zf.writestr(f"{base_filename}-formatted.txt", polished)
+        st.download_button(
+            label="Download All Formatted Transcripts (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name="all_formatted.zip",
+            mime="application/zip"
+        )
+    if st.sidebar.button(f"Format {len(uploaded_files)} file(s) with {model}"):
         for uploaded_file in uploaded_files:
             if f"polished_{uploaded_file.name}" not in st.session_state:
                 uploaded_file.seek(0)
@@ -177,22 +178,24 @@ if uploaded_files:
 
                 raw_tab, formatted_tab = st.tabs(["📄 Raw Transcript", "✨ Formatted Transcript"])
                 with raw_tab:
-                    st.text_area("Transcript Preview", raw_transcript, height=400)
+                    st.text_area("Transcript Preview", raw_transcript, height=400,key=f"raw_{uploaded_file.name}{uuid.uuid4()}")
                 with formatted_tab:
-                    st.text_area("Formatted Output", polished_transcript, height=400)
+                    st.text_area("Formatted Output", polished_transcript, height=400,key=f"formatted_{uploaded_file.name}{uuid.uuid4()}")
 
                 st.markdown("### 📥 Download Options")
                 st.download_button(
                     label="Download Raw Transcript (.txt)",
                     data=raw_transcript,
                     file_name=f"{base_filename}-raw.txt",
-                    mime="text/plain"
+                    mime="text/plain",
+                    key=f"raw_download_{uploaded_file.name}{uuid.uuid4()}"
                 )
                 st.download_button(
                     label="Download Formatted Transcript (.txt)",
                     data=polished_transcript,
                     file_name=f"{base_filename}-formatted.txt",
-                    mime="text/plain"
+                    mime="text/plain",
+                    key=f"formatted_download_{uploaded_file.name}{uuid.uuid4()}"
                 )
 
                 os.remove(formatted_txt_path)
