@@ -4,6 +4,9 @@ import tempfile
 import os
 from google import genai
 from openai import OpenAI
+import io
+import zipfile
+
 
 def split_transcript(transcript, max_chars=8000):
     chunks = []
@@ -113,6 +116,39 @@ model = st.sidebar.selectbox(
 uploaded_files = st.sidebar.file_uploader("Upload one or more Panopto HTML files", type="html", accept_multiple_files=True)
 
 if uploaded_files:
+    # if st.sidebar.button("Download all formatted transcripts"):
+    #     zip_buffer = io.BytesIO()
+    #     with zipfile.ZipFile(zip_buffer, "w") as zf:
+    #         for uploaded_file in uploaded_files:
+    #             if f"polished_{uploaded_file.name}" in st.session_state:
+    #                 polished = st.session_state[f"polished_{uploaded_file.name}"]
+    #                 uploaded_file.seek(0)
+    #                 content = uploaded_file.read()
+    #                 soup = BeautifulSoup(content, "html.parser")
+    #                 title_tag = soup.find("h1", id="deliveryTitle")
+    #                 base_filename = "transcript"
+    #                 if title_tag and title_tag.text.strip():
+    #                     base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
+
+    #                 zf.writestr(f"{base_filename}-formatted.txt", polished)
+    #     st.download_button(
+    #         label="Download All Formatted Transcripts (ZIP)",
+    #         data=zip_buffer.getvalue(),
+    #         file_name="all_formatted.zip",
+    #         mime="application/zip"
+    #     )
+    if st.sidebar.button("Format all uploaded files with the selected model"):
+        for uploaded_file in uploaded_files:
+            if f"polished_{uploaded_file.name}" not in st.session_state:
+                uploaded_file.seek(0)
+                html_content = uploaded_file.read()
+                raw_transcript = extract_transcript_from_html(html_content)
+                with st.spinner(f"Formatting {uploaded_file.name}..."):
+                    if model == "GPT-3.5 Turbo":
+                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
+                    else:
+                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gemini(raw_transcript)
+
     for uploaded_file in uploaded_files:
         with st.expander(f"📂 {uploaded_file.name}", expanded=True):
             html_content = uploaded_file.read()
@@ -126,7 +162,7 @@ if uploaded_files:
 
             format_button_label = "Format with GPT-3.5 Turbo" if model == "GPT-3.5 Turbo" else "Format with Gemini 2.0 Flash"
             if f"polished_{uploaded_file.name}" not in st.session_state:
-                if st.button(format_button_label):
+                if st.button(format_button_label,key=uploaded_file.name):
                     with st.spinner(f"Formatting {uploaded_file.name}..."):
                         if model == "GPT-3.5 Turbo":
                             st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
