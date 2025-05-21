@@ -7,6 +7,8 @@ from openai import OpenAI
 import io
 import zipfile
 import uuid
+from st_copy_to_clipboard import st_copy_to_clipboard
+from fpdf import FPDF
 
 
 st.set_page_config(
@@ -50,6 +52,17 @@ def process_chunks(chunks, format_chunk_func):
             results[i] = formatted_text
             progress.progress(sum(r is not None for r in results) / len(chunks))
     return "\n\n---\n\n".join(results)
+
+def generate_pdf_bytes(text_content):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=11)
+    # Add a check for empty or None text_content to avoid FPDF errors
+    if text_content and text_content.strip():
+        pdf.multi_cell(0, 7, txt=text_content)
+    else:
+        pdf.multi_cell(0, 7, txt="[No content available for PDF export]")
+    return pdf.output(dest='S').encode('latin-1')
 
 @st.cache_data
 def extract_transcript_from_html(html_content):
@@ -147,65 +160,121 @@ if uploaded_files:
         )
     if st.sidebar.button(f"Format {len(uploaded_files)} file(s) with {model}"):
         for uploaded_file in uploaded_files:
-            if f"polished_{uploaded_file.name}" not in st.session_state:
-                uploaded_file.seek(0)
-                html_content = uploaded_file.read()
-                raw_transcript = extract_transcript_from_html(html_content)
+            polished_key = f"polished_{uploaded_file.name}"
+            raw_key = f"raw_{uploaded_file.name}"
+
+            if polished_key not in st.session_state:
+                # Ensure raw transcript is available, caching if necessary
+                if raw_key not in st.session_state:
+                    uploaded_file.seek(0)
+                    html_content_sidebar = uploaded_file.read()
+                    st.session_state[raw_key] = extract_transcript_from_html(html_content_sidebar)
+                
+                current_raw_transcript = st.session_state[raw_key]
                 with st.spinner(f"Formatting {uploaded_file.name}..."):
                     if model == "GPT-3.5 Turbo":
-                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
+                        st.session_state[polished_key] = polish_transcript_with_gpt(current_raw_transcript)
                     else:
-                        st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gemini(raw_transcript)
+                        st.session_state[polished_key] = polish_transcript_with_gemini(current_raw_transcript)
 
     for uploaded_file in uploaded_files:
+        raw_transcript_key = f"raw_{uploaded_file.name}"
+        polished_transcript_key = f"polished_{uploaded_file.name}"
+
+        # Read file content once for this iteration's needs (title, and potential raw extraction)
+        uploaded_file.seek(0)
+        html_content = uploaded_file.read()
+
+        # Extract title (base_filename)
+        soup = BeautifulSoup(html_content, "html.parser")
+        title_tag = soup.find("h1", id="deliveryTitle")
+        base_filename = "transcript"
+        if title_tag and title_tag.text.strip():
+            base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
+
+        # Ensure raw transcript is extracted and cached using the already read html_content
+        if raw_transcript_key not in st.session_state:
+            # We've already read html_content, so pass it directly
+            st.session_state[raw_transcript_key] = extract_transcript_from_html(html_content)
+        
+        # Definitive raw transcript for this file iteration from session state
+        raw_transcript = st.session_state[raw_transcript_key]
+
         with st.expander(f"📂 {uploaded_file.name}", expanded=True):
-            html_content = uploaded_file.read()
-            soup = BeautifulSoup(html_content, "html.parser")
-            title_tag = soup.find("h1", id="deliveryTitle")
-            base_filename = "transcript"
-            if title_tag and title_tag.text.strip():
-                base_filename = title_tag.text.strip().replace(" ", "-").replace("–", "-")
-
-            raw_transcript = extract_transcript_from_html(html_content)
-
-            format_button_label = "Format with GPT-3.5 Turbo" if model == "GPT-3.5 Turbo" else "Format with Gemini 2.0 Flash"
-            if f"polished_{uploaded_file.name}" not in st.session_state:
-                if st.button(format_button_label,key=uploaded_file.name):
+            # --- Format Button: Only shown if not yet polished ---
+            if polished_transcript_key not in st.session_state:
+                format_button_label = "Format with GPT-3.5 Turbo" if model == "GPT-3.5 Turbo" else "Format with Gemini 2.0 Flash"
+                if st.button(format_button_label, key=f"format_button_{uploaded_file.name}_{uuid.uuid4()}"):
                     with st.spinner(f"Formatting {uploaded_file.name}..."):
                         if model == "GPT-3.5 Turbo":
-                            st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gpt(raw_transcript)
+                            st.session_state[polished_transcript_key] = polish_transcript_with_gpt(raw_transcript)
                         else:
-                            st.session_state[f"polished_{uploaded_file.name}"] = polish_transcript_with_gemini(raw_transcript)
-
-            if f"polished_{uploaded_file.name}" in st.session_state:
-                polished_transcript = st.session_state[f"polished_{uploaded_file.name}"]
-                with tempfile.NamedTemporaryFile(delete=False, suffix="_formatted.txt", mode="w", encoding="utf-8") as tmp:
-                    tmp.write(polished_transcript)
-                    formatted_txt_path = tmp.name
-
-                raw_tab, formatted_tab = st.tabs(["📄 Raw Transcript", "✨ Formatted Transcript"])
-                with raw_tab:
-                    st.text_area("Transcript Preview", raw_transcript, height=400,key=f"raw_{uploaded_file.name}{uuid.uuid4()}")
-                with formatted_tab:
-                    st.text_area("Formatted Output", polished_transcript, height=400,key=f"formatted_{uploaded_file.name}{uuid.uuid4()}")
-
-                st.markdown("### 📥 Download Options")
+                            st.session_state[polished_transcript_key] = polish_transcript_with_gemini(raw_transcript)
+            
+            # --- Raw Transcript Display and Actions ---
+            st.subheader("📄 Raw Transcript")
+            st.text_area("Raw Transcript Content", raw_transcript, height=300, key=f"raw_content_display_{uploaded_file.name}{uuid.uuid4()}")
+            
+            col_raw_copy, col_raw_download = st.columns(2)
+            with col_raw_copy:
+                st_copy_to_clipboard(raw_transcript, "Copy Raw Text", key=f"copy_raw_main_{uploaded_file.name}{uuid.uuid4()}")
+            with col_raw_download:
                 st.download_button(
-                    label="Download Raw Transcript (.txt)",
+                    label="Download Raw Text (.txt)",
                     data=raw_transcript,
                     file_name=f"{base_filename}-raw.txt",
                     mime="text/plain",
-                    key=f"raw_download_{uploaded_file.name}{uuid.uuid4()}"
+                    key=f"download_raw_main_{uploaded_file.name}{uuid.uuid4()}"
                 )
-                st.download_button(
-                    label="Download Formatted Transcript (.txt)",
-                    data=polished_transcript,
-                    file_name=f"{base_filename}-formatted.txt",
-                    mime="text/plain",
-                    key=f"formatted_download_{uploaded_file.name}{uuid.uuid4()}"
-                )
+            
+            st.markdown("---") # Visual separator
 
-                os.remove(formatted_txt_path)
+            # --- Formatted Transcript Display and Actions (Conditional) ---
+            if polished_transcript_key in st.session_state:
+                polished_transcript = st.session_state[polished_transcript_key]
+                st.subheader("✨ Formatted Transcript")
+                st.text_area("Formatted Transcript Content", polished_transcript, height=400, key=f"formatted_content_display_{uploaded_file.name}{uuid.uuid4()}")
+                
+                col_fmt_copy, col_fmt_download_txt, col_fmt_download_pdf = st.columns(3)
+                with col_fmt_copy:
+                    st_copy_to_clipboard(polished_transcript, "Copy Formatted Text", key=f"copy_formatted_main_{uploaded_file.name}{uuid.uuid4()}")
+                
+                with col_fmt_download_txt:
+                    formatted_txt_path_loop = None
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix="_formatted.txt", mode="w", encoding="utf-8") as tmp_loop:
+                            tmp_loop.write(polished_transcript)
+                            formatted_txt_path_loop = tmp_loop.name
+                        
+                        with open(formatted_txt_path_loop, "rb") as fp_txt_loop:
+                            st.download_button(
+                                label="Download Formatted (.txt)",
+                                data=fp_txt_loop,
+                                file_name=f"{base_filename}-formatted.txt",
+                                mime="text/plain",
+                                key=f"download_formatted_txt_main_{uploaded_file.name}{uuid.uuid4()}"
+                            )
+                    except Exception as e_fmt_txt:
+                        st.error(f"Error preparing formatted .txt for download: {e_fmt_txt}")
+                    finally:
+                        if formatted_txt_path_loop and os.path.exists(formatted_txt_path_loop):
+                            try:
+                                os.remove(formatted_txt_path_loop)
+                            except OSError: 
+                                pass # Error should be caught by the st.error above if critical
+                
+                with col_fmt_download_pdf:
+                    try:
+                        pdf_data = generate_pdf_bytes(polished_transcript)
+                        st.download_button(
+                            label="Export Formatted as PDF",
+                            data=pdf_data,
+                            file_name=f"{base_filename}-formatted.pdf",
+                            mime="application/pdf",
+                            key=f"download_pdf_main_{uploaded_file.name}{uuid.uuid4()}"
+                        )
+                    except Exception as e_pdf:
+                        st.error(f"Error generating PDF: {e_pdf}")
             else:
-                st.subheader("Preview of Extracted Raw Transcript")
-                st.text_area("Transcript Preview", raw_transcript, height=300)
+                # Placeholder if formatted transcript is not yet available
+                st.info("Formatted transcript and its options will appear here once AI processing is complete.")

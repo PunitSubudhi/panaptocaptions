@@ -2,3 +2,5 @@ beautifulsoup4==4.13.3
 openai==1.70.0
 streamlit==1.44.1
 google-genai==1.9.0
+st-copy-to-clipboard==0.1.6
+fpdf2>=2.7.7
