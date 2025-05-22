@@ -88,9 +88,9 @@ def generate_pdf_bytes(text_content):
     else:
         pdf.multi_cell(0, 7, txt="[No content available for PDF export]")
 
-    # pdf.output() by default returns bytes (dest='B') which is suitable for st.download_button
-    # For standard fonts, FPDF handles the encoding internally based on the font.
-    return pdf.output()
+    # Explicitly use pdf.output(dest='S') to return a string and encode it to bytes for consistent behavior.
+    # This ensures compatibility across different FPDF versions.
+    return pdf.output(dest='S').encode('utf-8')
 
 @st.cache_data
 def extract_transcript_from_html(html_content):
