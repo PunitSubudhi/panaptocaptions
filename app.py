@@ -54,6 +54,21 @@ def process_chunks(chunks, format_chunk_func):
     return "\n\n---\n\n".join(results)
 
 def generate_pdf_bytes(text_content):
+    """
+    Generate a PDF file from the given text content and return it as bytes.
+
+    Parameters:
+        text_content (str): The text content to include in the PDF. If the text is empty or None,
+            a placeholder message will be added to the PDF.
+
+    Encoding Strategy:
+        The text is encoded to 'latin-1' with replacement for unsupported characters, as required
+        by FPDF when using standard fonts like Arial.
+
+    Returns:
+        bytes: The generated PDF file as a byte stream, suitable for use with Streamlit's
+        st.download_button or similar functions.
+    """
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=11) # Use standard Arial font
